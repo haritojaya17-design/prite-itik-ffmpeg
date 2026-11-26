@@ -1,0 +1,76 @@
+
+name: Prite Itik - Render MP4
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Durasi video (detik)"
+        required: true
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Ambil file repositori
+        uses: actions/checkout@v4
+
+      - name: Instal FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Render video MP4
+        run: |
+          set -e
+          DURATION="${{ inputs.duration }}"
+
+          if ! [[ "$DURATION" =~ ^[0-9]+$ ]] || [ "$DURATION" -lt 10 ] || [ "$DURATION" -gt 90 ]; then
+            echo "Durasi harus 10 sampai 90 detik"
+            exit 1
+          fi
+
+          mkdir -p output
+
+          mapfile -t IMAGES < <(
+            find assets -maxdepth 1 -type f \
+            \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) \
+            | sort
+          )
+
+          if [ "${#IMAGES[@]}" -eq 0 ]; then
+            echo "Folder assets belum berisi gambar."
+            exit 1
+          fi
+
+          COUNT="${#IMAGES[@]}"
+          SEGMENT=$(awk -v d="$DURATION" -v n="$COUNT" 'BEGIN {printf "%.3f",d/n}')
+
+          : > output/list.txt
+
+          for img in "${IMAGES[@]}"; do
+            printf "file '%s/%s'\n" "$PWD" "$img" >> output/list.txt
+            printf "duration %s\n" "$SEGMENT" >> output/list.txt
+          done
+
+          LAST="${IMAGES[$((COUNT-1))]}"
+          printf "file '%s/%s'\n" "$PWD" "$LAST" >> output/list.txt
+
+          ffmpeg -y -f concat -safe 0 -i output/list.txt \
+            -vf "fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p" \
+            -t "$DURATION" -an -c:v libx264 -preset veryfast \
+            -crf 23 -movflags +faststart output/prite-itik.mp4
+
+      - name: Simpan MP4
+        uses: actions/upload-artifact@v4
+        with:
+          name: prite-itik-mp4
+          path: output/prite-itik.mp4
+          retention-days: 3
+          
