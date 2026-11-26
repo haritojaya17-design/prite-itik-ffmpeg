@@ -21,12 +21,42 @@ jobs:
       - name: Ambil file repositori
         uses: actions/checkout@v4
 
-      - name: Instal FFmpeg
+      - name: Instal FFmpeg dan Edge TTS
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          python -m pip install edge-tts
 
-      - name: Render video MP4
+      - name: Buat narasi pria bahasa Indonesia
+        run: |
+          mkdir -p output
+          cat > output/narration.txt <<'EOF'
+          Jangan pernah membuka pintu setelah jam tiga pagi.
+          Malam itu, Raka terbangun karena mendengar suara ibunya memanggil dari luar rumah.
+          Padahal, ibunya sudah meninggal tiga tahun lalu.
+          Raka mendekati pintu perlahan.
+          Tiba-tiba ponselnya bergetar.
+          Sebuah pesan masuk dari nomor tak dikenal.
+          Isinya hanya satu kalimat:
+          Jangan buka pintu. Ibu sedang tidur di kamarnya.
+          Raka langsung menoleh ke lorong gelap.
+          Dari dalam kamar ibunya, terdengar suara ketukan.
+          Tok... tok... tok...
+          Lalu suara yang sama kembali terdengar dari luar pintu.
+          Nak, bukakan pintu. Ibu kedinginan.
+          Raka mundur ketakutan.
+          Namun, gagang pintu mulai bergerak sendiri.
+          Dan dari belakangnya, seseorang berbisik:
+          Jangan menoleh. Itu bukan ibu.
+          EOF
+
+          edge-tts \
+            --voice id-ID-ArdiNeural \
+            --rate=-8% \
+            --file output/narration.txt \
+            --write-media output/narration.mp3
+
+      - name: Render video dan gabungkan suara
         run: |
           set -e
           DURATION="${{ inputs.duration }}"
@@ -37,7 +67,6 @@ jobs:
           fi
 
           mkdir -p output
-
           mapfile -t IMAGES < <(
             find assets -maxdepth 1 -type f \
             \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \) \
@@ -53,7 +82,6 @@ jobs:
           SEGMENT=$(awk -v d="$DURATION" -v n="$COUNT" 'BEGIN {printf "%.3f",d/n}')
 
           : > output/list.txt
-
           for img in "${IMAGES[@]}"; do
             printf "file '%s/%s'\n" "$PWD" "$img" >> output/list.txt
             printf "duration %s\n" "$SEGMENT" >> output/list.txt
@@ -65,7 +93,13 @@ jobs:
           ffmpeg -y -f concat -safe 0 -i output/list.txt \
             -vf "fps=30,scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,format=yuv420p" \
             -t "$DURATION" -an -c:v libx264 -preset veryfast \
-            -crf 23 -movflags +faststart output/prite-itik.mp4
+            -crf 23 output/silent.mp4
+
+          ffmpeg -y -i output/silent.mp4 -i output/narration.mp3 \
+            -filter_complex "[1:a]apad,atrim=0:${DURATION}[voice]" \
+            -map 0:v:0 -map "[voice]" \
+            -t "$DURATION" -c:v copy -c:a aac -b:a 192k \
+            -movflags +faststart output/prite-itik.mp4
 
       - name: Simpan MP4
         uses: actions/upload-artifact@v4
